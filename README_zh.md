@@ -26,9 +26,24 @@ irm https://raw.githubusercontent.com/LegendNero/llm-api-proxy-check/main/instal
 ```
 
 要求：电脑上已有 Python **3.9+**。  
-安装脚本会自动建独立环境，不会搞乱系统 Python。
+安装脚本会自动建独立环境，并把 `~/.local/bin` 写入 shell 配置（Windows 写入用户 PATH）。
 
-> 如果提示找不到命令，把 `~/.local/bin`（Windows 为安装目录下的 `bin`）加入 PATH，或新开一个终端再试。
+### 若提示 `command not found`
+
+安装其实多半已经成功，只是**当前终端还没加载 PATH**。任选一种立刻可用：
+
+```bash
+# 方式 A：完整路径（最省事）
+~/.local/bin/llm-api-proxy-check setup
+
+# 方式 B：当前终端临时生效
+export PATH="$HOME/.local/bin:$PATH"
+llm-api-proxy-check setup
+
+# 方式 C：重新安装一次（新版安装脚本会自动写 PATH）
+curl -fsSL https://raw.githubusercontent.com/LegendNero/llm-api-proxy-check/main/install.sh | bash
+# 然后新开一个终端，再运行 llm-api-proxy-check setup
+```
 
 ### 第 2 步：中文向导设置（只需一次）
 
@@ -51,19 +66,28 @@ llm-api-proxy-check setup
 llm-api-proxy-check show-config
 ```
 
-### 第 3 步：一键完整检测
+### 第 3 步：一键检测（默认省 token）
 
 ```bash
 llm-api-proxy-check check
 ```
 
-会自动读取本机配置，依次跑：
+默认 **economy（省 token）** 模式，自动读取本机配置，跑：
 
-- 模型指纹（tokenizer / 分布 / 能力 / Needle）
-- 流式 SSE 完整性
-- 工具调用完整性
+- 能力题（合并为一问）、短 Needle
+- 流式 SSE + 工具完整性
+- **不**对同端点空跑对照指纹；未配置参考端点时跳过耗 token 的分词/分布对照
 
-然后给出健康分和风险等级。
+结束后报告会显示：
+
+- **API 用量**：本次大约消耗多少 tokens、几次请求
+- **发现的问题怎么处理**：按失败/未知检查项给出可执行建议
+
+需要更全、更费额度时：
+
+```bash
+llm-api-proxy-check check --full
+```
 
 ---
 
@@ -147,9 +171,11 @@ python -m llm_api_proxy_check check
 
 ## 功能一览
 
-- **指纹套件**：tokenizer、输出分布、能力题、长上下文 Needle
+- **省 token 默认模式** + `--full` 完整模式
+- **指纹套件**：tokenizer、输出分布、能力题、Needle
 - **SSE 完整性**：事件解析、`[DONE]`、JSON、usage 形态
 - **工具调用完整性**：跨 delta 重组，检测 name 被改写
+- **用量统计与修复建议**：报告内展示 tokens 与按项处理指引
 - **中文 setup 向导**：本机保存配置，密钥脱敏展示
 - **零运行时依赖**：只要 Python 3.9+ 标准库
 
@@ -174,8 +200,12 @@ install.sh             macOS/Linux 一键安装
 install.ps1            Windows 一键安装
 tests/                 单元测试
 .github/               CI
-IMPLEMENTATION.md      设计说明
+IMPLEMENTATION.md      与代码同步的实施说明（模块/数据流/验收）
 ```
+
+## 开发说明
+
+更细的模块边界、配置优先级、评分权重与验收命令见 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
 
 ## 许可证
 

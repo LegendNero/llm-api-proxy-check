@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+
+from llm_api_proxy_check.usage import TokenUsage
 
 MAX_STREAM_BYTES = 2_000_000
 
@@ -25,6 +28,7 @@ class OpenAICompatibleHTTPClient:
         self.api_key = api_key
         self.model = model
         self.timeout = float(timeout)
+        self.token_usage = TokenUsage()
 
     def _headers(self, *, accept: str) -> dict[str, str]:
         return {
@@ -33,7 +37,7 @@ class OpenAICompatibleHTTPClient:
             "Accept": accept,
         }
 
-    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _request(self, payload: dict[str, Any], *, label: str) -> dict[str, Any]:
         request = Request(
             urljoin(self.base_url, "chat/completions"),
             data=json.dumps(payload).encode("utf-8"),
@@ -53,9 +57,10 @@ class OpenAICompatibleHTTPClient:
             raise RuntimeError("OpenAI-compatible response is not JSON") from error
         if not isinstance(parsed, dict):
             raise RuntimeError("OpenAI-compatible response must be an object")
+        self.token_usage.record(parsed.get("usage"), label=label)
         return parsed
 
-    def _completion(self, prompt: str, *, max_tokens: int, logprobs: bool = False) -> dict[str, Any]:
+    def _completion(self, prompt: str, *, max_tokens: int, logprobs: bool = False, label: str = "completion") -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -64,11 +69,11 @@ class OpenAICompatibleHTTPClient:
             "stream": False,
         }
         if logprobs:
-            payload.update({"logprobs": True, "top_logprobs": 20})
-        return self._request(payload)
+            payload.update({"logprobs": True, "top_logprobs": 5})
+        return self._request(payload, label=label)
 
     def tokenize(self, text: str) -> int:
-        response = self._completion(text, max_tokens=1)
+        response = self._completion(text, max_tokens=1, label="tokenize")
         usage = response.get("usage")
         value = usage.get("prompt_tokens") if isinstance(usage, dict) else None
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -76,7 +81,7 @@ class OpenAICompatibleHTTPClient:
         return value
 
     def complete(self, prompt: str, *, max_tokens: int = 64) -> str:
-        response = self._completion(prompt, max_tokens=max_tokens)
+        response = self._completion(prompt, max_tokens=max_tokens, label="complete")
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise RuntimeError("response choices invalid")
@@ -87,7 +92,7 @@ class OpenAICompatibleHTTPClient:
         return content
 
     def distribution(self, prompt: str) -> Mapping[str, float]:
-        response = self._completion(prompt, max_tokens=1, logprobs=True)
+        response = self._completion(prompt, max_tokens=1, logprobs=True, label="distribution")
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise RuntimeError("response choices invalid")
@@ -116,8 +121,9 @@ class OpenAICompatibleHTTPClient:
         *,
         tools: Sequence[Mapping[str, Any]] | None = None,
         tool_choice: str | Mapping[str, Any] | None = None,
-        max_tokens: int = 128,
+        max_tokens: int = 64,
         include_usage: bool = True,
+        label: str = "stream",
     ) -> str:
         if not messages:
             raise ValueError("messages 不能为空")
@@ -159,4 +165,24 @@ class OpenAICompatibleHTTPClient:
             raise RuntimeError("OpenAI-compatible stream request failed") from error
         if not body.strip():
             raise RuntimeError("OpenAI-compatible stream response empty")
+        self.token_usage.record(_usage_from_sse(body), label=label)
         return body
+
+
+def _usage_from_sse(stream: str) -> dict[str, Any] | None:
+    last: dict[str, Any] | None = None
+    normalized = stream.replace("\r\n", "\n").replace("\r", "\n")
+    for block in re.split(r"\n{2,}", normalized):
+        data_lines = [line[6:] if line.startswith("data: ") else line[5:] for line in block.splitlines() if line.startswith("data:")]
+        if not data_lines:
+            continue
+        payload = "\n".join(data_lines)
+        if payload == "[DONE]" or payload.strip() == "[DONE]":
+            continue
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("usage"), dict):
+            last = parsed["usage"]
+    return last

@@ -25,7 +25,18 @@ curl -fsSL https://raw.githubusercontent.com/LegendNero/llm-api-proxy-check/main
 irm https://raw.githubusercontent.com/LegendNero/llm-api-proxy-check/main/install.ps1 | iex
 ```
 
-Requires Python **3.9+**. Installer uses an isolated venv so system Python stays clean.
+Requires Python **3.9+**. Installer uses an isolated venv and persists `~/.local/bin` on PATH (Windows: user PATH).
+
+### If you see `command not found`
+
+The tool is usually installed; the current shell just lacks PATH. Use either:
+
+```bash
+~/.local/bin/llm-api-proxy-check setup
+# or
+export PATH="$HOME/.local/bin:$PATH"
+llm-api-proxy-check setup
+```
 
 ### 2) Interactive setup (once)
 
@@ -40,14 +51,14 @@ Optional official/reference endpoint for stronger comparison. Connectivity smoke
 llm-api-proxy-check show-config
 ```
 
-### 3) One-command full check
+### 3) One-command check (economy by default)
 
 ```bash
 llm-api-proxy-check check
 ```
 
-Loads saved config and runs fingerprint + streaming SSE + tool integrity, then prints a health score.
-
+Default **economy** mode (fewer tokens): short Needle, combined capability prompt, skip same-endpoint fingerprint waste.  
+Report shows **token usage** and **per-check fix advice**. Use `check --full` for deeper (costlier) probes.
 ---
 
 ## Try without any key
@@ -113,6 +124,10 @@ Default config path:
 - Tool-call integrity across streamed deltas
 - Chinese/English-friendly CLI with local setup wizard
 - Zero runtime dependencies (Python 3.9+ stdlib)
+
+## Design notes
+
+Module map, config precedence, scoring weights, and acceptance checks: [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ## License
 

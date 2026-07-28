@@ -9,9 +9,10 @@ from llm_api_proxy_check.config import UserConfig, default_config_path, load_con
 from llm_api_proxy_check.http_client import OpenAICompatibleHTTPClient
 from llm_api_proxy_check.integrity import audit_stream
 from llm_api_proxy_check.mock import MockClient, mock_sse
-from llm_api_proxy_check.probes import run_fingerprint_suite
+from llm_api_proxy_check.probes import economy_config, full_config, run_fingerprint_suite
 from llm_api_proxy_check.report import build_report, report_json
 from llm_api_proxy_check.safe_cli import run_command
+from llm_api_proxy_check.usage import TokenUsage
 from llm_api_proxy_check.wizard import run_setup, show_config
 
 EXIT_OK = 0
@@ -42,13 +43,17 @@ TOOL_DEFINITION: dict[str, Any] = {
 
 
 def _demo(format_name: str) -> int:
-    checks = run_fingerprint_suite(MockClient(degraded=True), MockClient(degraded=False))
+    checks = run_fingerprint_suite(MockClient(degraded=True), MockClient(degraded=False), config=full_config())
     stream = audit_stream(
         mock_sse(tampered=True),
         expected_usage=80,
         original_tools=({"name": "search", "arguments": '{"query":"status"}'},),
     )
-    report = build_report((*checks, *stream.checks))
+    usage = TokenUsage()
+    usage.record({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, label="demo")
+    usage.requests = 0
+    usage.total_tokens = 0
+    report = build_report((*checks, *stream.checks), token_usage=usage, mode="demo")
     print(report_json(report) if format_name == "json" else report.markdown(), end="")
     return EXIT_RISK if report.risk == "high" else EXIT_OK
 
@@ -81,6 +86,8 @@ def _default_check_args(format_name: str = "markdown") -> argparse.Namespace:
         demo=False,
         skip_stream=False,
         skip_tools=False,
+        full=False,
+        economy=True,
     )
 
 
@@ -115,30 +122,37 @@ def _resolve_config(args: argparse.Namespace) -> UserConfig | None:
     )
 
 
+def _probe_config(args: argparse.Namespace):
+    if bool(getattr(args, "full", False)):
+        return full_config()
+    return economy_config()
+
+
 def _run_stream_checks(client: OpenAICompatibleHTTPClient, *, skip_tools: bool, verbose: bool) -> tuple:
     from llm_api_proxy_check.models import CheckResult, Status
 
     if skip_tools:
-        _progress(verbose, "→ 正在检测流式 SSE …")
-        raw = client.stream_chat([{"role": "user", "content": "只回复一个字：好"}], max_tokens=16)
+        _progress(verbose, "→ 正在检测流式 SSE（短回复，省 token）…")
+        raw = client.stream_chat([{"role": "user", "content": "只回复：好"}], max_tokens=4, label="sse")
         stream = audit_stream(raw)
         return stream.checks
 
     _progress(verbose, "→ 正在检测流式 SSE + 工具调用 …")
     try:
         raw = client.stream_chat(
-            [{"role": "user", "content": f"请调用工具 {TOOL_PROBE_NAME} 查询{TOOL_PROBE_CITY}的天气，不要直接回答。"}],
+            [{"role": "user", "content": f"调用工具 {TOOL_PROBE_NAME}，city={TOOL_PROBE_CITY}，不要直接回答。"}],
             tools=[TOOL_DEFINITION],
             tool_choice={"type": "function", "function": {"name": TOOL_PROBE_NAME}},
-            max_tokens=64,
+            max_tokens=32,
+            label="sse+tools",
         )
         expected_tools = ({"name": TOOL_PROBE_NAME},)
         stream = audit_stream(raw, original_tools=expected_tools)
         return stream.checks
     except (OSError, RuntimeError, TypeError, ValueError) as error:
-        _progress(verbose, f"  工具流检测失败，改为普通流式检测：{error}")
+        _progress(verbose, f"  工具流失败，改为普通短流式：{error}")
         try:
-            raw = client.stream_chat([{"role": "user", "content": "只回复一个字：好"}], max_tokens=16)
+            raw = client.stream_chat([{"role": "user", "content": "只回复：好"}], max_tokens=4, label="sse-fallback")
             stream = audit_stream(raw)
             fallback = list(stream.checks)
             fallback.append(CheckResult("tool_integrity", Status.UNKNOWN, None, 1, f"tool stream failed: {error}", 4))
@@ -150,6 +164,20 @@ def _run_stream_checks(client: OpenAICompatibleHTTPClient, *, skip_tools: bool, 
                 CheckResult("usage_integrity", Status.UNKNOWN, None, None, "stream request failed", 3),
                 CheckResult("tool_integrity", Status.UNKNOWN, None, 1, f"tool stream failed: {error}", 4),
             )
+
+
+def _merge_client_usage(*clients: object) -> TokenUsage:
+    total = TokenUsage()
+    seen: set[int] = set()
+    for client in clients:
+        ident = id(client)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        usage = getattr(client, "token_usage", None)
+        if isinstance(usage, TokenUsage):
+            total = total.merge(usage)
+    return total
 
 
 def _check(args: argparse.Namespace) -> int:
@@ -181,7 +209,11 @@ def _check(args: argparse.Namespace) -> int:
         return _demo(format_name)
 
     try:
-        _progress(verbose, f"使用配置检测: {config.base_url} / model={config.model}")
+        probe_cfg = _probe_config(args)
+        mode = probe_cfg.mode
+        _progress(verbose, f"使用配置检测: {config.base_url} / model={config.model} / mode={mode}")
+        if mode == "economy":
+            _progress(verbose, "省 token 模式：短 Needle、合并能力题、默认同端点不跑对照指纹；需要更全请加 --full")
         target = OpenAICompatibleHTTPClient(config.base_url, config.api_key, config.model, timeout=config.timeout)
         if config.ref_base_url and config.ref_api_key:
             reference = OpenAICompatibleHTTPClient(
@@ -193,10 +225,10 @@ def _check(args: argparse.Namespace) -> int:
             _progress(verbose, f"参考端点: {config.ref_base_url}")
         else:
             reference = target
-            _progress(verbose, "未配置参考端点，将用同一端点做对照（适合先看流式/工具完整性）")
+            _progress(verbose, "未配置参考端点：跳过耗 token 的对照指纹，优先测能力/SSE/工具")
 
         _progress(verbose, "→ 正在跑指纹套件 …")
-        checks = list(run_fingerprint_suite(target, reference))
+        checks = list(run_fingerprint_suite(target, reference, config=probe_cfg))
 
         if not getattr(args, "skip_stream", False):
             stream_checks = _run_stream_checks(
@@ -208,8 +240,9 @@ def _check(args: argparse.Namespace) -> int:
         else:
             _progress(verbose, "已跳过流式 / 工具检测")
 
-        report = build_report(checks)
-        _progress(verbose, "检测完成，生成报告 …")
+        usage = _merge_client_usage(target, reference)
+        report = build_report(checks, token_usage=usage, mode=mode)
+        _progress(verbose, f"检测完成。{usage.summary_line()}")
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         print(f"llm-api-proxy-check: {error}", file=sys.stderr)
         print("若还没设置过，可先运行: llm-api-proxy-check setup", file=sys.stderr)
@@ -246,18 +279,19 @@ def _setup() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="llm-api-proxy-check",
-        description="检测 OpenAI 兼容 LLM API 代理完整性（小白三步：安装 → setup → check）",
+        description="检测 OpenAI 兼容 LLM API 代理完整性（默认省 token；结束显示用量与处理建议）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "快速上手:\n"
-            "  1) llm-api-proxy-check setup     # 中文向导，保存本机配置\n"
-            "  2) llm-api-proxy-check check     # 一键：指纹 + SSE + 工具\n"
-            "  3) llm-api-proxy-check check --demo   # 无需 Key 的本地演示\n"
+            "  1) llm-api-proxy-check setup\n"
+            "  2) llm-api-proxy-check check          # 默认 economy，少耗 token\n"
+            "  3) llm-api-proxy-check check --full   # 更全、更费 token\n"
+            "  4) llm-api-proxy-check check --demo   # 本地演示\n"
         ),
     )
     subparsers = parser.add_subparsers(dest="action")
 
-    check = subparsers.add_parser("check", help="一键检测：优先读本机配置；无配置时跑本地 demo")
+    check = subparsers.add_parser("check", help="一键检测：默认省 token；报告含用量与处理建议")
     check.add_argument("--base-url", default=None, help=f"代理 Base URL，也可设 {ENV_BASE_URL} 或先 setup")
     check.add_argument("--api-key", default=None, help=f"API Key，也可设 {ENV_API_KEY} 或先 setup")
     check.add_argument("--model", default=None, help=f"模型名，默认读配置或 gpt-4o-mini，也可设 {ENV_MODEL}")
@@ -267,8 +301,10 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--timeout", type=float, default=None, help="HTTP 超时秒数，默认读配置或 30")
     check.add_argument("--format", choices=("json", "markdown"), default="markdown")
     check.add_argument("--demo", action="store_true", help="强制本地 Mock 演示，不读真实配置")
-    check.add_argument("--skip-stream", action="store_true", help="跳过流式 SSE / 工具检测，只跑指纹")
-    check.add_argument("--skip-tools", action="store_true", help="流式检测时不做工具调用，只测普通 SSE")
+    check.add_argument("--skip-stream", action="store_true", help="跳过流式 SSE / 工具，进一步省 token")
+    check.add_argument("--skip-tools", action="store_true", help="流式只测 SSE，不测工具")
+    check.add_argument("--full", action="store_true", help="完整模式：更多样本、长 Needle、分布探针（更费 token）")
+    check.add_argument("--economy", action="store_true", default=False, help="省 token 模式（默认，可不写）")
 
     demo = subparsers.add_parser("demo", help="仅本地 Mock 演示（等同 check --demo）")
     demo.add_argument("--format", choices=("json", "markdown"), default="markdown")

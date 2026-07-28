@@ -16,7 +16,9 @@ class MockClient(ProbeClient):
         return {"42": 0.7, "73": 0.2, "7": 0.1} if not self.degraded else {"1": 0.8, "2": 0.1, "3": 0.1}
 
     def complete(self, prompt: str, *, max_tokens: int = 64) -> str:
-        if "37 * 19" in prompt:
+        if "37*19" in prompt.replace(" ", "") and "abc-123" in prompt:
+            return "703\n321-cba"
+        if "37 * 19" in prompt or "37*19" in prompt.replace(" ", ""):
             return "703"
         if "abc-123" in prompt:
             return "321-cba"

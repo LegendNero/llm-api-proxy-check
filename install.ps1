@@ -48,6 +48,19 @@ function Find-Python {
     return $null
 }
 
+function Persist-UserPath([string]$Directory) {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) { $userPath = "" }
+    $parts = $userPath -split ";" | Where-Object { $_ -and $_.Trim() -ne "" }
+    if ($parts -contains $Directory) {
+        Write-Log "用户 PATH 已包含: $Directory"
+        return
+    }
+    $newPath = if ($userPath.Trim()) { "$Directory;$userPath" } else { $Directory }
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Log "已将 $Directory 写入用户 PATH（新开终端后生效）"
+}
+
 $PythonBin = Find-Python
 if (-not $PythonBin) {
     Die "需要 Python 3.9+，请先安装后重试"
@@ -79,22 +92,28 @@ $VenvCli = Join-Path $VenvDir "Scripts\llm-api-proxy-check.exe"
 
 if (-not ($env:Path -split ";" | Where-Object { $_ -eq $BinDir })) {
     $env:Path = "$BinDir;$env:Path"
-    Write-Log "已临时将 $BinDir 加入 PATH"
-    Write-Log "永久生效可将该目录加入用户 PATH 环境变量"
+    Write-Log "已将 $BinDir 加入当前会话 PATH"
 }
+Persist-UserPath $BinDir
 
 if (-not (Test-Path $VenvCli)) {
     Die "虚拟环境中未找到 llm-api-proxy-check 入口"
 }
 
+Write-Log ""
 Write-Log "安装成功: $Wrapper"
 Write-Log ""
-Write-Log "小白三步走："
-Write-Log "  1) 本地演示（无需 Key）: llm-api-proxy-check check --demo"
-Write-Log "  2) 中文设置向导:         llm-api-proxy-check setup"
-Write-Log "  3) 一键完整检测:         llm-api-proxy-check check"
+Write-Log "若提示找不到命令，当前窗口可立刻用："
+Write-Log "  1) 完整路径:  `"$Wrapper`" setup"
+Write-Log "  2) 临时生效:  `$env:Path = `"$BinDir;`$env:Path`"; llm-api-proxy-check setup"
+Write-Log "  3) 新开终端后再运行: llm-api-proxy-check setup"
 Write-Log ""
-Write-Log "查看配置: llm-api-proxy-check show-config"
+Write-Log "小白三步走："
+Write-Log "  1) 本地演示: `"$Wrapper`" check --demo"
+Write-Log "  2) 中文设置: `"$Wrapper`" setup"
+Write-Log "  3) 一键检测: `"$Wrapper`" check"
+Write-Log ""
+Write-Log "查看配置: `"$Wrapper`" show-config"
 
 & $VenvPython -m llm_api_proxy_check check --format json | Out-Null
 Write-Log "验证完成（本地 demo 已通过模块入口）。"

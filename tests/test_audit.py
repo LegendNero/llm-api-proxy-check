@@ -160,6 +160,18 @@ class ReportTests(unittest.TestCase):
         self.assertIn("\\|", markdown)
         self.assertIn("<br>", markdown)
         self.assertNotIn("<script>", markdown)
+        self.assertIn("advice", json_output)
+        self.assertIn("怎么处理", markdown)
+
+    def test_report_includes_token_usage(self) -> None:
+        from llm_api_proxy_check.usage import TokenUsage
+
+        usage = TokenUsage()
+        usage.record({"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}, label="complete")
+        report = build_report((CheckResult("capability_baseline", Status.PASS, 2, 2, "ok", 2),), token_usage=usage, mode="economy")
+        self.assertEqual(report.token_usage["total_tokens"], 12)
+        self.assertIn("12", report.markdown())
+        self.assertEqual(report.as_dict()["mode"], "economy")
 
 
 if __name__ == "__main__":

@@ -46,8 +46,10 @@ class ConfigTests(unittest.TestCase):
                 path,
             )
             args = cli._default_check_args(format_name="json")
+            fake_client = mock.Mock()
+            fake_client.token_usage = cli.TokenUsage()
             with mock.patch.dict(os.environ, {"LLM_API_PROXY_CHECK_CONFIG": str(path)}, clear=False):
-                with mock.patch.object(cli, "OpenAICompatibleHTTPClient") as client_cls:
+                with mock.patch.object(cli, "OpenAICompatibleHTTPClient", return_value=fake_client) as client_cls:
                     with mock.patch.object(cli, "run_fingerprint_suite", return_value=[]):
                         with mock.patch.object(cli, "_run_stream_checks", return_value=()):
                             with mock.patch.object(cli, "build_report") as build:
@@ -63,6 +65,8 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(kwargs.args[0], "https://proxy.example/v1")
                 self.assertEqual(kwargs.args[1], "sk-from-file")
                 self.assertEqual(kwargs.args[2], "demo-model")
+                usage_arg = build.call_args.kwargs.get("token_usage")
+                self.assertIsInstance(usage_arg, cli.TokenUsage)
 
     def test_check_demo_flag_ignores_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -16,11 +16,28 @@ class OpenAIHandler(BaseHTTPRequestHandler):
         length = int(self.headers["Content-Length"])
         payload = json.loads(self.rfile.read(length))
         self.requests.append({"path": self.path, "authorization": self.headers.get("Authorization"), "payload": payload})
+        if payload.get("stream"):
+            chunks = [
+                'data: {"choices":[{"delta":{"content":"好"}}],"usage":null}',
+                'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}',
+                "data: [DONE]",
+            ]
+            body = ("\n\n".join(chunks) + "\n\n").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         prompt = payload["messages"][0]["content"]
         if payload.get("logprobs"):
-            body = {"choices": [{"message": {"content": "42"}, "logprobs": {"content": [{"top_logprobs": [{"token": "42", "logprob": -0.1}, {"token": "73", "logprob": -2.0}]}]}}], "usage": {"prompt_tokens": 7, "total_tokens": 8}}
+            body = {
+                "choices": [{"message": {"content": "42"}, "logprobs": {"content": [{"top_logprobs": [{"token": "42", "logprob": -0.1}, {"token": "73", "logprob": -2.0}]}]}}],
+                "usage": {"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8},
+            }
         else:
-            body = {"choices": [{"message": {"content": "703" if "37 * 19" in prompt else "ok"}}], "usage": {"prompt_tokens": 7, "total_tokens": 8}}
+            content = "703" if "37 * 19" in prompt or "37*19" in prompt.replace(" ", "") else "ok"
+            body = {"choices": [{"message": {"content": content}}], "usage": {"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8}}
         encoded = json.dumps(body).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

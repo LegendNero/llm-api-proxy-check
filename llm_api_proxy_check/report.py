@@ -3,10 +3,13 @@ from __future__ import annotations
 import html
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
+from llm_api_proxy_check.advice import advice_for_checks
 from llm_api_proxy_check.models import CheckResult, Status
+from llm_api_proxy_check.usage import TokenUsage
 
 _CHECK_WEIGHTS = {
     "tokenizer_fingerprint": 2,
@@ -49,20 +52,72 @@ class AuditReport:
     risk: str
     coverage: float
     checks: tuple[CheckResult, ...]
+    token_usage: dict[str, Any] | None = None
+    advice: tuple[str, ...] = ()
+    mode: str | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {"score": self.score, "risk": self.risk, "coverage": self.coverage, "checks": [check.as_dict() for check in self.checks]}
+        payload: dict[str, object] = {
+            "score": self.score,
+            "risk": self.risk,
+            "coverage": self.coverage,
+            "checks": [check.as_dict() for check in self.checks],
+            "advice": list(self.advice),
+        }
+        if self.mode is not None:
+            payload["mode"] = self.mode
+        if self.token_usage is not None:
+            payload["token_usage"] = self.token_usage
+        return payload
 
     def markdown(self) -> str:
-        lines = [f"# Relay API Audit\n\n- 健康分：**{self.score}/100**\n- 风险等级：**{self.risk}**\n- 检查覆盖率：**{self.coverage:.1%}**\n", "| 检查 | 状态 | 值 | 阈值 | 证据 |", "|---|---|---:|---:|---|"]
-        lines.extend(f"| {_markdown_cell(check.name)} | {check.status.value} | {_markdown_cell(check.value)} | {_markdown_cell(check.threshold)} | {_markdown_cell(check.evidence)} |" for check in self.checks)
+        lines = [
+            "# Relay API Audit\n",
+            f"- 健康分：**{self.score}/100**",
+            f"- 风险等级：**{self.risk}**",
+            f"- 检查覆盖率：**{self.coverage:.1%}**",
+        ]
+        if self.mode:
+            lines.append(f"- 检测模式：**{self.mode}**（economy=省 token；full=更全更费）")
+        if self.token_usage is not None:
+            usage = TokenUsage(
+                prompt_tokens=int(self.token_usage.get("prompt_tokens") or 0),
+                completion_tokens=int(self.token_usage.get("completion_tokens") or 0),
+                total_tokens=int(self.token_usage.get("total_tokens") or 0),
+                requests=int(self.token_usage.get("requests") or 0),
+                missing_usage_responses=int(self.token_usage.get("missing_usage_responses") or 0),
+            )
+            lines.append(f"- API 用量：{usage.summary_line()}")
+            by_label = self.token_usage.get("by_label")
+            if isinstance(by_label, dict) and by_label:
+                detail = "，".join(f"{key}={value}" for key, value in by_label.items())
+                lines.append(f"- 用量明细：{detail}")
+        lines.extend(["", "| 检查 | 状态 | 值 | 阈值 | 证据 |", "|---|---|---:|---:|---|"])
+        lines.extend(
+            f"| {_markdown_cell(check.name)} | {check.status.value} | {_markdown_cell(check.value)} | {_markdown_cell(check.threshold)} | {_markdown_cell(check.evidence)} |"
+            for check in self.checks
+        )
+        if self.advice:
+            lines.extend(["", "## 发现的问题怎么处理", ""])
+            lines.extend(self.advice)
+            lines.append("")
+            lines.append("通用建议：先 `show-config` 确认地址/模型 → 能配官方参考就配 → 仍高风险则换中转或直连官方复测。")
         return "\n".join(lines) + "\n"
 
 
-def build_report(checks: Iterable[CheckResult]) -> AuditReport:
+def build_report(
+    checks: Iterable[CheckResult],
+    *,
+    token_usage: TokenUsage | dict[str, Any] | None = None,
+    mode: str | None = None,
+    advice: Sequence[str] | None = None,
+) -> AuditReport:
     supplied = tuple(checks)
     by_name = {check.name: check for check in supplied if check.name in _CHECK_WEIGHTS}
-    expected = tuple(_sanitize(by_name[name], weight) if name in by_name else CheckResult(name, Status.UNKNOWN, None, None, "check not run", weight) for name, weight in _CHECK_WEIGHTS.items())
+    expected = tuple(
+        _sanitize(by_name[name], weight) if name in by_name else CheckResult(name, Status.UNKNOWN, None, None, "check not run", weight)
+        for name, weight in _CHECK_WEIGHTS.items()
+    )
     extras = tuple(_sanitize(check) for check in supplied if check.name not in _CHECK_WEIGHTS)
     total_weight = sum(_CHECK_WEIGHTS.values())
     penalty = sum(check.weight for check in expected if check.status is Status.FAIL)
@@ -70,7 +125,15 @@ def build_report(checks: Iterable[CheckResult]) -> AuditReport:
     score = max(0, round(100 * (1 - (penalty + unknown_penalty) / total_weight)))
     coverage = sum(check.weight for check in expected if check.status is not Status.UNKNOWN) / total_weight
     risk = "low" if score >= 85 else "medium" if score >= 60 else "high"
-    return AuditReport(score, risk, coverage, (*expected, *extras))
+    usage_dict: dict[str, Any] | None
+    if isinstance(token_usage, TokenUsage):
+        usage_dict = token_usage.as_dict()
+    elif isinstance(token_usage, dict):
+        usage_dict = token_usage
+    else:
+        usage_dict = None
+    advice_lines = tuple(advice) if advice is not None else advice_for_checks((*expected, *extras))
+    return AuditReport(score, risk, coverage, (*expected, *extras), usage_dict, advice_lines, mode)
 
 
 def report_json(report: AuditReport) -> str:
