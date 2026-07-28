@@ -5,11 +5,11 @@ import math
 import unittest
 from collections.abc import Mapping
 
-from relay_audit.integrity import SSEControlFrame, audit_stream, parse_sse_events
-from relay_audit.mock import MockClient, mock_sse
-from relay_audit.models import CheckResult, Status
-from relay_audit.probes import ProbeConfig, distribution_probe, js_divergence, needle_probe, run_fingerprint_suite
-from relay_audit.report import build_report, report_json
+from llm_api_proxy_check.integrity import SSEControlFrame, audit_stream, parse_sse_events
+from llm_api_proxy_check.mock import MockClient, mock_sse
+from llm_api_proxy_check.models import CheckResult, Status
+from llm_api_proxy_check.probes import ProbeConfig, distribution_probe, js_divergence, needle_probe, run_fingerprint_suite
+from llm_api_proxy_check.report import build_report, report_json
 
 
 class FaultyClient(MockClient):

@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from relay_audit.models import CheckResult, Status
+from llm_api_proxy_check.models import CheckResult, Status
 
 _CHECK_WEIGHTS = {
     "tokenizer_fingerprint": 2,

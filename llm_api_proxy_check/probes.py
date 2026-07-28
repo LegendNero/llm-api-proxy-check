@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from relay_audit.models import CheckResult, Status
+from llm_api_proxy_check.models import CheckResult, Status
 
 
 class ProbeClient(Protocol):

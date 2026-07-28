@@ -19,6 +19,7 @@ venv/
 htmlcov/
 .DS_Store
 *.log
-relay-audit-report.json
+llm-api-proxy-check-report.json
 .idea/
 .vscode/
+.trae/

@@ -25,11 +25,11 @@
 
 ### 3.1 安全 CLI 适配层
 
-`relay_audit/cli.py` 提供 `run_command` 与 `main`。`run_command` 接收不可变参数数组，拒绝空命令、shell 元字符和超出长度的参数；仅继承必要的 locale/path 环境，捕获 stdout/stderr 并限制字节数。适配层不负责解析业务结果。
+`llm_api_proxy_check/cli.py` 提供 `run_command` 与 `main`。`run_command` 接收不可变参数数组，拒绝空命令、shell 元字符和超出长度的参数；仅继承必要的 locale/path 环境，捕获 stdout/stderr 并限制字节数。适配层不负责解析业务结果。
 
 ### 3.2 指纹与 Needle 探针
 
-`relay_audit/probes.py` 定义 `ProbeClient` 协议及四类探针：
+`llm_api_proxy_check/probes.py` 定义 `ProbeClient` 协议及四类探针：
 
 - tokenizer：对固定字符串集合比较 token 数量向量。
 - distribution：比较离散概率分布并计算 Jensen-Shannon 散度。
@@ -49,7 +49,7 @@
 
 ### 3.4 基线评分与报告
 
-`relay_audit/report.py` 将探针与完整性结果映射为 0-100 健康分和风险等级：
+`llm_api_proxy_check/report.py` 将探针与完整性结果映射为 0-100 健康分和风险等级：
 
 - 每个失败信号扣分，严重的流完整性、工具重写和 token 计费偏差权重更高。
 - 缺失信号标记为 `unknown`，不伪装成通过。
@@ -57,7 +57,7 @@
 
 ### 3.5 Mock 与 CLI
 
-`relay_audit/mock.py` 提供稳定的本地 Mock 客户端和带风险的 Mock SSE 流。`python -m relay_audit demo --format markdown` 运行全套检查；`python -m relay_audit audit --command ...` 展示安全 CLI 适配层。真实 API 接入可在不改变探针接口的前提下增加客户端。
+`llm_api_proxy_check/mock.py` 提供稳定的本地 Mock 客户端和带风险的 Mock SSE 流。`python -m llm_api_proxy_check demo --format markdown` 运行全套检查；`python -m llm_api_proxy_check audit --command ...` 展示安全 CLI 适配层。真实 API 接入可在不改变探针接口的前提下增加客户端。
 
 ## 4. 数据流
 
@@ -80,7 +80,7 @@ CI 只依赖退出码和 JSON 摘要，不解析 Markdown。报告中明确区�
 ## 7. 交付验收标准
 
 - `python -m unittest discover -s tests -v` 通过。
-- `python -m compileall -q relay_audit tests` 通过。
-- `python -m relay_audit demo --format json` 返回风险结果且不泄漏秘密。
+- `python -m compileall -q llm_api_proxy_check tests` 通过。
+- `python -m llm_api_proxy_check demo --format json` 返回风险结果且不泄漏秘密。
 - 安全 CLI 不允许 shell 注入，并能报告超时与非零退出。
 - GitHub Action 文件可在无真实凭证环境中执行 Mock 演示。

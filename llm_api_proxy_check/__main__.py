@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import sys
 
-from relay_audit.integrity import audit_stream
-from relay_audit.mock import MockClient, mock_sse
-from relay_audit.probes import run_fingerprint_suite
-from relay_audit.report import build_report, report_json
-from relay_audit.safe_cli import run_command
+from llm_api_proxy_check.integrity import audit_stream
+from llm_api_proxy_check.mock import MockClient, mock_sse
+from llm_api_proxy_check.probes import run_fingerprint_suite
+from llm_api_proxy_check.report import build_report, report_json
+from llm_api_proxy_check.safe_cli import run_command
 
 EXIT_OK = 0
 EXIT_RISK = 1
@@ -27,7 +27,7 @@ def _demo(format_name: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="relay-audit")
+    parser = argparse.ArgumentParser(prog="llm-api-proxy-check")
     subparsers = parser.add_subparsers(dest="action", required=True)
     demo = subparsers.add_parser("demo")
     demo.add_argument("--format", choices=("json", "markdown"), default="markdown")
@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_command(command_args)
     except (OSError, TypeError, ValueError) as error:
-        print(f"relay-audit: {error}", file=sys.stderr)
+        print(f"llm-api-proxy-check: {error}", file=sys.stderr)
         return EXIT_ERROR
     print(result.stdout, end="")
     if result.stderr:

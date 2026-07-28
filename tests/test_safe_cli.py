@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import cast
 from unittest.mock import patch
 
-from relay_audit.safe_cli import run_command
+from llm_api_proxy_check.safe_cli import run_command
 
 
 class SafeCliTests(unittest.TestCase):

@@ -1,8 +1,10 @@
-# relay-audit
+# llm-api-proxy-check
 
-Standard-library toolkit for auditing OpenAI-compatible **relay / proxy API integrity**.
+Standard-library toolkit that **checks the integrity of OpenAI-compatible LLM API proxies** (relay / middleman endpoints).
 
-Detects common integrity risks such as model substitution signals, SSE stream tampering, tool-call rewriting, and usage accounting anomalies — without requiring a cloud account for the local mock demo.
+Detects common risks such as model-substitution signals, SSE stream tampering, tool-call rewriting, and usage accounting anomalies — no cloud account required for the local mock demo.
+
+Search keywords: **LLM**, **API**, **proxy**, OpenAI-compatible, integrity, SSE, tool calls, audit, fingerprint.
 
 ## Features
 
@@ -18,10 +20,10 @@ Detects common integrity risks such as model substitution signals, SSE stream ta
 
 ```bash
 # mock demo (no API key)
-python -m relay_audit demo --format markdown
+python -m llm_api_proxy_check demo --format markdown
 
 # JSON report for CI
-python -m relay_audit demo --format json
+python -m llm_api_proxy_check demo --format json
 
 # run tests
 python -m unittest discover -s tests -v
@@ -31,12 +33,12 @@ Optional install as a console script:
 
 ```bash
 pip install -e .
-relay-audit demo --format markdown
+llm-api-proxy-check demo --format markdown
 ```
 
 ## Real endpoint (optional)
 
-Use an OpenAI-compatible base URL and API key via environment variables / CLI flags supported by the HTTP client path (see `relay_audit/http_client.py` and `python -m relay_audit --help`). Never commit keys.
+Use an OpenAI-compatible base URL and API key via the HTTP client path (`llm_api_proxy_check/http_client.py` and `python -m llm_api_proxy_check --help`). Never commit keys.
 
 ## Exit codes
 
@@ -49,10 +51,10 @@ Use an OpenAI-compatible base URL and API key via environment variables / CLI fl
 ## Project layout
 
 ```
-relay_audit/     core library + CLI
-tests/           unittest suite
-.github/         CI workflow
-IMPLEMENTATION.md  design notes for the MVP
+llm_api_proxy_check/   core library + CLI
+tests/                 unittest suite
+.github/               CI workflow
+IMPLEMENTATION.md      design notes for the MVP
 ```
 
 ## License

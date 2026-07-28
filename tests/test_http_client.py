@@ -6,7 +6,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, ClassVar
 
-from relay_audit.http_client import OpenAICompatibleHTTPClient
+from llm_api_proxy_check.http_client import OpenAICompatibleHTTPClient
 
 
 class OpenAIHandler(BaseHTTPRequestHandler):

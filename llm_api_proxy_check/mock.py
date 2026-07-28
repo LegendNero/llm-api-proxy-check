@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from relay_audit.probes import ProbeClient
+from llm_api_proxy_check.probes import ProbeClient
 
 
 class MockClient(ProbeClient):

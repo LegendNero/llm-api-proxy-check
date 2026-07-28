@@ -1,4 +1,4 @@
-name: relay-audit
+name: llm-api-proxy-check
 
 on:
   push:
@@ -16,13 +16,13 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m unittest discover -s tests -v
-      - run: python -m compileall -q relay_audit tests
+      - run: python -m compileall -q llm_api_proxy_check tests
       - run: python -m pip install ruff mypy
-      - run: ruff check relay_audit tests
-      - run: mypy relay_audit tests
-      - run: python -m relay_audit demo --format json > relay-audit-report.json
+      - run: ruff check llm_api_proxy_check tests
+      - run: mypy llm_api_proxy_check tests
+      - run: python -m llm_api_proxy_check demo --format json > llm-api-proxy-check-report.json
         continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
-          name: relay-audit-report
-          path: relay-audit-report.json
+          name: llm-api-proxy-check-report
+          path: llm-api-proxy-check-report.json

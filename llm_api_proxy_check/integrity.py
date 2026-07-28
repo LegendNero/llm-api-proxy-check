@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Union
 
-from relay_audit.models import CheckResult, Status
+from llm_api_proxy_check.models import CheckResult, Status
 
 
 class SSEControlFrame(Enum):

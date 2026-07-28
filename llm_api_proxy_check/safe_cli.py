@@ -5,7 +5,7 @@ import os
 import subprocess
 from collections.abc import Mapping, Sequence
 
-from relay_audit.models import CommandResult
+from llm_api_proxy_check.models import CommandResult
 
 _MAX_ARGS = 128
 _MAX_ARG_LENGTH = 4096
