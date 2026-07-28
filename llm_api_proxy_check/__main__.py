@@ -3,13 +3,16 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import Any
 
+from llm_api_proxy_check.config import UserConfig, default_config_path, load_config
 from llm_api_proxy_check.http_client import OpenAICompatibleHTTPClient
 from llm_api_proxy_check.integrity import audit_stream
 from llm_api_proxy_check.mock import MockClient, mock_sse
 from llm_api_proxy_check.probes import run_fingerprint_suite
 from llm_api_proxy_check.report import build_report, report_json
 from llm_api_proxy_check.safe_cli import run_command
+from llm_api_proxy_check.wizard import run_setup, show_config
 
 EXIT_OK = 0
 EXIT_RISK = 1
@@ -21,6 +24,21 @@ ENV_MODEL = "LLM_API_PROXY_CHECK_MODEL"
 ENV_REF_BASE_URL = "LLM_API_PROXY_CHECK_REF_BASE_URL"
 ENV_REF_API_KEY = "LLM_API_PROXY_CHECK_REF_API_KEY"
 ENV_REF_MODEL = "LLM_API_PROXY_CHECK_REF_MODEL"
+
+TOOL_PROBE_NAME = "get_weather"
+TOOL_PROBE_CITY = "北京"
+TOOL_DEFINITION: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": TOOL_PROBE_NAME,
+        "description": "查询城市天气",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string", "description": "城市名"}},
+            "required": ["city"],
+        },
+    },
+}
 
 
 def _demo(format_name: str) -> int:
@@ -58,39 +76,143 @@ def _default_check_args(format_name: str = "markdown") -> argparse.Namespace:
         ref_base_url=None,
         ref_api_key=None,
         ref_model=None,
-        timeout=30.0,
+        timeout=None,
         format=format_name,
+        demo=False,
+        skip_stream=False,
+        skip_tools=False,
     )
 
 
-def _check(args: argparse.Namespace) -> int:
-    base_url = getattr(args, "base_url", None) or _env(ENV_BASE_URL)
-    api_key = getattr(args, "api_key", None) or _env(ENV_API_KEY)
-    model = getattr(args, "model", None) or _env(ENV_MODEL) or "gpt-4o-mini"
-    timeout = float(getattr(args, "timeout", 30.0) or 30.0)
-    format_name = getattr(args, "format", "markdown") or "markdown"
-    if not base_url and not api_key:
-        return _demo(format_name)
+def _progress(enabled: bool, message: str) -> None:
+    if enabled:
+        print(message, file=sys.stderr)
+
+
+def _resolve_config(args: argparse.Namespace) -> UserConfig | None:
+    file_config = load_config()
+    base_url = getattr(args, "base_url", None) or _env(ENV_BASE_URL) or (file_config.base_url if file_config else None)
+    api_key = getattr(args, "api_key", None) or _env(ENV_API_KEY) or (file_config.api_key if file_config else None)
+    model = getattr(args, "model", None) or _env(ENV_MODEL) or (file_config.model if file_config else None) or "gpt-4o-mini"
+    timeout_arg = getattr(args, "timeout", None)
+    if timeout_arg is None:
+        timeout = file_config.timeout if file_config else 30.0
+    else:
+        timeout = float(timeout_arg)
     if not base_url or not api_key:
-        print(
-            "llm-api-proxy-check: 真实检测需要同时提供 --base-url 与 --api-key"
-            f"（或环境变量 {ENV_BASE_URL} / {ENV_API_KEY}）；仅本地演示请直接运行 check 且不传端点参数",
-            file=sys.stderr,
-        )
-        return EXIT_ERROR
+        return None
+    ref_base = getattr(args, "ref_base_url", None) or _env(ENV_REF_BASE_URL) or (file_config.ref_base_url if file_config else None)
+    ref_key = getattr(args, "ref_api_key", None) or _env(ENV_REF_API_KEY) or (file_config.ref_api_key if file_config else None)
+    ref_model = getattr(args, "ref_model", None) or _env(ENV_REF_MODEL) or (file_config.ref_model if file_config else None) or model
+    return UserConfig(
+        base_url=str(base_url).strip(),
+        api_key=str(api_key).strip(),
+        model=str(model).strip(),
+        ref_base_url=str(ref_base).strip() if ref_base else None,
+        ref_api_key=str(ref_key).strip() if ref_key else None,
+        ref_model=str(ref_model).strip() if ref_model else None,
+        timeout=float(timeout) if float(timeout) > 0 else 30.0,
+    )
+
+
+def _run_stream_checks(client: OpenAICompatibleHTTPClient, *, skip_tools: bool, verbose: bool) -> tuple:
+    from llm_api_proxy_check.models import CheckResult, Status
+
+    if skip_tools:
+        _progress(verbose, "→ 正在检测流式 SSE …")
+        raw = client.stream_chat([{"role": "user", "content": "只回复一个字：好"}], max_tokens=16)
+        stream = audit_stream(raw)
+        return stream.checks
+
+    _progress(verbose, "→ 正在检测流式 SSE + 工具调用 …")
     try:
-        target = OpenAICompatibleHTTPClient(base_url, api_key, model, timeout=timeout)
-        ref_base = getattr(args, "ref_base_url", None) or _env(ENV_REF_BASE_URL)
-        ref_key = getattr(args, "ref_api_key", None) or _env(ENV_REF_API_KEY)
-        ref_model = getattr(args, "ref_model", None) or _env(ENV_REF_MODEL) or model
-        if ref_base and ref_key:
-            reference = OpenAICompatibleHTTPClient(ref_base, ref_key, ref_model, timeout=timeout)
+        raw = client.stream_chat(
+            [{"role": "user", "content": f"请调用工具 {TOOL_PROBE_NAME} 查询{TOOL_PROBE_CITY}的天气，不要直接回答。"}],
+            tools=[TOOL_DEFINITION],
+            tool_choice={"type": "function", "function": {"name": TOOL_PROBE_NAME}},
+            max_tokens=64,
+        )
+        expected_tools = ({"name": TOOL_PROBE_NAME},)
+        stream = audit_stream(raw, original_tools=expected_tools)
+        return stream.checks
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        _progress(verbose, f"  工具流检测失败，改为普通流式检测：{error}")
+        try:
+            raw = client.stream_chat([{"role": "user", "content": "只回复一个字：好"}], max_tokens=16)
+            stream = audit_stream(raw)
+            fallback = list(stream.checks)
+            fallback.append(CheckResult("tool_integrity", Status.UNKNOWN, None, 1, f"tool stream failed: {error}", 4))
+            return tuple(fallback)
+        except (OSError, RuntimeError, TypeError, ValueError) as stream_error:
+            return (
+                CheckResult("sse_json", Status.FAIL, None, None, str(stream_error), 4),
+                CheckResult("sse_done", Status.UNKNOWN, None, 1, "stream request failed", 3),
+                CheckResult("usage_integrity", Status.UNKNOWN, None, None, "stream request failed", 3),
+                CheckResult("tool_integrity", Status.UNKNOWN, None, 1, f"tool stream failed: {error}", 4),
+            )
+
+
+def _check(args: argparse.Namespace) -> int:
+    format_name = getattr(args, "format", "markdown") or "markdown"
+    force_demo = bool(getattr(args, "demo", False))
+    verbose = format_name != "json"
+    if force_demo:
+        return _demo(format_name)
+
+    config = _resolve_config(args)
+    if config is None:
+        has_partial = bool(
+            getattr(args, "base_url", None)
+            or getattr(args, "api_key", None)
+            or _env(ENV_BASE_URL)
+            or _env(ENV_API_KEY)
+        )
+        if has_partial:
+            print(
+                "llm-api-proxy-check: 真实检测需要同时提供代理地址和 API Key。\n"
+                f"  方式 1（推荐）: llm-api-proxy-check setup\n"
+                f"  方式 2: --base-url 与 --api-key，或环境变量 {ENV_BASE_URL} / {ENV_API_KEY}\n"
+                "  仅本地演示: llm-api-proxy-check check --demo",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        if load_config() is None and not getattr(args, "base_url", None) and not _env(ENV_BASE_URL):
+            _progress(verbose, "未找到已保存配置，先跑本地演示。正式使用请运行: llm-api-proxy-check setup")
+        return _demo(format_name)
+
+    try:
+        _progress(verbose, f"使用配置检测: {config.base_url} / model={config.model}")
+        target = OpenAICompatibleHTTPClient(config.base_url, config.api_key, config.model, timeout=config.timeout)
+        if config.ref_base_url and config.ref_api_key:
+            reference = OpenAICompatibleHTTPClient(
+                config.ref_base_url,
+                config.ref_api_key,
+                config.ref_model or config.model,
+                timeout=config.timeout,
+            )
+            _progress(verbose, f"参考端点: {config.ref_base_url}")
         else:
             reference = target
-        checks = run_fingerprint_suite(target, reference)
+            _progress(verbose, "未配置参考端点，将用同一端点做对照（适合先看流式/工具完整性）")
+
+        _progress(verbose, "→ 正在跑指纹套件 …")
+        checks = list(run_fingerprint_suite(target, reference))
+
+        if not getattr(args, "skip_stream", False):
+            stream_checks = _run_stream_checks(
+                target,
+                skip_tools=bool(getattr(args, "skip_tools", False)),
+                verbose=verbose,
+            )
+            checks.extend(stream_checks)
+        else:
+            _progress(verbose, "已跳过流式 / 工具检测")
+
         report = build_report(checks)
+        _progress(verbose, "检测完成，生成报告 …")
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         print(f"llm-api-proxy-check: {error}", file=sys.stderr)
+        print("若还没设置过，可先运行: llm-api-proxy-check setup", file=sys.stderr)
         return EXIT_ERROR
     return _print_report(report, format_name)
 
@@ -112,25 +234,48 @@ def _audit(command_args: list[str]) -> int:
     return EXIT_OK if result.succeeded else EXIT_RISK
 
 
+def _setup() -> int:
+    try:
+        run_setup()
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        print(f"llm-api-proxy-check: {error}", file=sys.stderr)
+        return EXIT_ERROR
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="llm-api-proxy-check",
-        description="Check integrity of OpenAI-compatible LLM API proxies",
+        description="检测 OpenAI 兼容 LLM API 代理完整性（小白三步：安装 → setup → check）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "快速上手:\n"
+            "  1) llm-api-proxy-check setup     # 中文向导，保存本机配置\n"
+            "  2) llm-api-proxy-check check     # 一键：指纹 + SSE + 工具\n"
+            "  3) llm-api-proxy-check check --demo   # 无需 Key 的本地演示\n"
+        ),
     )
     subparsers = parser.add_subparsers(dest="action")
 
-    check = subparsers.add_parser("check", help="一键检测：无端点时跑本地 demo，有端点时检测真实代理")
-    check.add_argument("--base-url", default=None, help=f"代理 Base URL，也可设 {ENV_BASE_URL}")
-    check.add_argument("--api-key", default=None, help=f"API Key，也可设 {ENV_API_KEY}")
-    check.add_argument("--model", default=None, help=f"模型名，默认 gpt-4o-mini，也可设 {ENV_MODEL}")
+    check = subparsers.add_parser("check", help="一键检测：优先读本机配置；无配置时跑本地 demo")
+    check.add_argument("--base-url", default=None, help=f"代理 Base URL，也可设 {ENV_BASE_URL} 或先 setup")
+    check.add_argument("--api-key", default=None, help=f"API Key，也可设 {ENV_API_KEY} 或先 setup")
+    check.add_argument("--model", default=None, help=f"模型名，默认读配置或 gpt-4o-mini，也可设 {ENV_MODEL}")
     check.add_argument("--ref-base-url", default=None, help=f"参考端点 Base URL，也可设 {ENV_REF_BASE_URL}")
     check.add_argument("--ref-api-key", default=None, help=f"参考端点 API Key，也可设 {ENV_REF_API_KEY}")
     check.add_argument("--ref-model", default=None, help=f"参考模型名，也可设 {ENV_REF_MODEL}")
-    check.add_argument("--timeout", type=float, default=30.0, help="HTTP 超时秒数，默认 30")
+    check.add_argument("--timeout", type=float, default=None, help="HTTP 超时秒数，默认读配置或 30")
     check.add_argument("--format", choices=("json", "markdown"), default="markdown")
+    check.add_argument("--demo", action="store_true", help="强制本地 Mock 演示，不读真实配置")
+    check.add_argument("--skip-stream", action="store_true", help="跳过流式 SSE / 工具检测，只跑指纹")
+    check.add_argument("--skip-tools", action="store_true", help="流式检测时不做工具调用，只测普通 SSE")
 
-    demo = subparsers.add_parser("demo", help="仅本地 Mock 演示（等同 check 无参数）")
+    demo = subparsers.add_parser("demo", help="仅本地 Mock 演示（等同 check --demo）")
     demo.add_argument("--format", choices=("json", "markdown"), default="markdown")
+
+    subparsers.add_parser("setup", help="中文交互向导：保存代理地址 / API Key / 模型到本机")
+    subparsers.add_parser("show-config", help="查看本机已保存配置（密钥脱敏）")
+    subparsers.add_parser("config-path", help="打印配置文件路径")
 
     command = subparsers.add_parser("audit", help="安全执行外部命令并返回其退出状态")
     command.add_argument("command", nargs=argparse.REMAINDER)
@@ -142,6 +287,13 @@ def main(argv: list[str] | None = None) -> int:
         return _demo(args.format)
     if args.action == "check":
         return _check(args)
+    if args.action == "setup":
+        return _setup()
+    if args.action == "show-config":
+        return show_config()
+    if args.action == "config-path":
+        print(default_config_path())
+        return EXIT_OK
     if args.action == "audit":
         command_args = args.command[1:] if args.command[:1] == ["--"] else args.command
         return _audit(command_args)

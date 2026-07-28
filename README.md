@@ -4,11 +4,14 @@
 
 Standard-library toolkit that **checks the integrity of OpenAI-compatible LLM API proxies** (relay / middleman endpoints).
 
-Detects common risks such as model-substitution signals, SSE stream tampering, tool-call rewriting, and usage accounting anomalies — no cloud account required for the local mock demo.
+Detects model-substitution signals, SSE tampering, tool-call rewriting, and usage anomalies.  
+**Local demo needs no API key.**
 
-Search keywords: **LLM**, **API**, **proxy**, OpenAI-compatible, integrity, SSE, tool calls, audit, fingerprint.
+---
 
-## One-line install
+## Beginner path (3 steps)
+
+### 1) One-line install
 
 **macOS / Linux**
 
@@ -22,75 +25,94 @@ curl -fsSL https://raw.githubusercontent.com/LegendNero/llm-api-proxy-check/main
 irm https://raw.githubusercontent.com/LegendNero/llm-api-proxy-check/main/install.ps1 | iex
 ```
 
-Requirements: Python **3.9+**. The script creates an isolated venv under `~/.local/share/llm-api-proxy-check`, installs from this GitHub repo, and places a launcher in `~/.local/bin`.
+Requires Python **3.9+**. Installer uses an isolated venv so system Python stays clean.
 
-Manual install (venv recommended on Homebrew / PEP 668 systems):
+### 2) Interactive setup (once)
 
 ```bash
-python3 -m venv ~/.venvs/llm-api-proxy-check
-~/.venvs/llm-api-proxy-check/bin/pip install "git+https://github.com/LegendNero/llm-api-proxy-check.git"
+llm-api-proxy-check setup
 ```
 
-## Everyday commands
+Prompts for Base URL, API key (hidden input, stored locally only), and model.  
+Optional official/reference endpoint for stronger comparison. Connectivity smoke test available.
 
 ```bash
-# Local demo (no API key) — default entry after install
+llm-api-proxy-check show-config
+```
+
+### 3) One-command full check
+
+```bash
 llm-api-proxy-check check
-
-# Real proxy check
-llm-api-proxy-check check --base-url https://your-proxy.example/v1 --api-key "$KEY" --model gpt-4o-mini
-
-# JSON for CI
-llm-api-proxy-check check --format json
 ```
 
-Or without installing the console script:
+Loads saved config and runs fingerprint + streaming SSE + tool integrity, then prints a health score.
+
+---
+
+## Try without any key
 
 ```bash
+llm-api-proxy-check check --demo
+```
+
+---
+
+## More commands
+
+```bash
+llm-api-proxy-check check --format json
+llm-api-proxy-check check --skip-stream
+llm-api-proxy-check check --skip-tools
+llm-api-proxy-check check --base-url https://your-proxy.example/v1 --api-key "$KEY" --model gpt-4o-mini
+llm-api-proxy-check config-path
+```
+
+Or:
+
+```bash
+python -m llm_api_proxy_check setup
 python -m llm_api_proxy_check check
 ```
 
-Environment variables (optional):
+### Environment variables (optional; override file config)
 
 | Variable | Meaning |
 |----------|---------|
 | `LLM_API_PROXY_CHECK_BASE_URL` | Proxy base URL |
 | `LLM_API_PROXY_CHECK_API_KEY` | API key |
-| `LLM_API_PROXY_CHECK_MODEL` | Model name (default `gpt-4o-mini`) |
-| `LLM_API_PROXY_CHECK_REF_BASE_URL` | Optional reference endpoint |
-| `LLM_API_PROXY_CHECK_REF_API_KEY` | Optional reference API key |
-| `LLM_API_PROXY_CHECK_REF_MODEL` | Optional reference model |
+| `LLM_API_PROXY_CHECK_MODEL` | Model name |
+| `LLM_API_PROXY_CHECK_REF_BASE_URL` | Reference endpoint |
+| `LLM_API_PROXY_CHECK_REF_API_KEY` | Reference key |
+| `LLM_API_PROXY_CHECK_REF_MODEL` | Reference model |
+| `LLM_API_PROXY_CHECK_CONFIG` | Custom config path |
 
 Never commit API keys.
 
-## Features
+Default config path:
 
-- **Fingerprint suite**: tokenizer counts, output distribution distance, capability checks, long-context Needle probe
-- **SSE integrity**: event parsing, `[DONE]` control frames, JSON validity, usage shape checks
-- **Tool-call integrity**: reassembly and rewrite detection across streamed deltas
-- **Risk scoring**: weighted 0–100 score with `pass` / `fail` / `unknown` coverage
-- **Safe CLI adapter**: `subprocess` with `shell=False`, timeouts, and output limits
-- **CI-ready**: GitHub Action runs tests, ruff, mypy, and a mock demo report
-- **Zero runtime deps**: Python 3.9+ standard library only
+- macOS / Linux: `~/.config/llm-api-proxy-check/config.json`
+- Windows: `%APPDATA%\llm-api-proxy-check\config.json`
+
+---
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Audit passed (low/medium risk treated as non-failure for exit; high → 1) |
+| 0 | Not high risk |
 | 1 | High risk detected |
-| 2 | Parameter / runtime error |
+| 2 | Argument / runtime error |
 
-## Project layout
+---
 
-```
-llm_api_proxy_check/   core library + CLI
-install.sh             one-line install (macOS/Linux)
-install.ps1            one-line install (Windows)
-tests/                 unittest suite
-.github/               CI workflow
-IMPLEMENTATION.md      design notes for the MVP
-```
+## Features
+
+- Fingerprint suite (tokenizer, distribution, capability, Needle)
+- SSE integrity (`[DONE]`, JSON, usage shape)
+- Tool-call integrity across streamed deltas
+- Chinese/English-friendly CLI with local setup wizard
+- Zero runtime dependencies (Python 3.9+ stdlib)
 
 ## License
 

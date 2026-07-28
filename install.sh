@@ -78,8 +78,13 @@ esac
 
 if [[ -x "${VENV_DIR}/bin/llm-api-proxy-check" ]]; then
   log "安装成功: $WRAPPER"
-  log "快速体验: llm-api-proxy-check check"
-  log "真实检测: llm-api-proxy-check check --base-url URL --api-key KEY --model MODEL"
+  log ""
+  log "小白三步走："
+  log "  1) 本地演示（无需 Key）: llm-api-proxy-check check --demo"
+  log "  2) 中文设置向导:         llm-api-proxy-check setup"
+  log "  3) 一键完整检测:         llm-api-proxy-check check"
+  log ""
+  log "查看配置: llm-api-proxy-check show-config"
 else
   die "虚拟环境中未找到 llm-api-proxy-check 入口"
 fi

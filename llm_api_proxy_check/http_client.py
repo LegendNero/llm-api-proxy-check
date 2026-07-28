@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+
+MAX_STREAM_BYTES = 2_000_000
 
 
 class OpenAICompatibleHTTPClient:
@@ -24,11 +26,18 @@ class OpenAICompatibleHTTPClient:
         self.model = model
         self.timeout = float(timeout)
 
+    def _headers(self, *, accept: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": accept,
+        }
+
     def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = Request(
             urljoin(self.base_url, "chat/completions"),
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+            headers=self._headers(accept="application/json"),
             method="POST",
         )
         try:
@@ -100,3 +109,54 @@ class OpenAICompatibleHTTPClient:
         if not distribution:
             raise RuntimeError("response distribution empty")
         return distribution
+
+    def stream_chat(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        tool_choice: str | Mapping[str, Any] | None = None,
+        max_tokens: int = 128,
+        include_usage: bool = True,
+    ) -> str:
+        if not messages:
+            raise ValueError("messages 不能为空")
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": list(messages),
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = list(tools)
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if include_usage:
+            payload["stream_options"] = {"include_usage": True}
+        request = Request(
+            urljoin(self.base_url, "chat/completions"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers=self._headers(accept="text/event-stream"),
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    piece = response.read(8192)
+                    if not piece:
+                        break
+                    total += len(piece)
+                    if total > MAX_STREAM_BYTES:
+                        raise RuntimeError("SSE stream exceeds safety size limit")
+                    chunks.append(piece)
+                body = b"".join(chunks).decode("utf-8", errors="replace")
+        except HTTPError as error:
+            raise RuntimeError(f"OpenAI-compatible HTTP {error.code}") from error
+        except (URLError, TimeoutError) as error:
+            raise RuntimeError("OpenAI-compatible stream request failed") from error
+        if not body.strip():
+            raise RuntimeError("OpenAI-compatible stream response empty")
+        return body

@@ -140,12 +140,47 @@ def audit_stream(stream: str, *, expected_usage: int | None = None, original_too
         else:
             ratio = abs(usage - expected) / max(1, expected)
             checks.append(CheckResult("usage_integrity", Status.PASS if ratio <= 0.2 else Status.FAIL, round(ratio, 4), 0.2, f"reported={usage}", 3))
+    elif usage_invalid:
+        checks.append(CheckResult("usage_integrity", Status.FAIL, None, None, "usage.total_tokens invalid", 3))
+    elif usage is None:
+        checks.append(CheckResult("usage_integrity", Status.UNKNOWN, None, None, "usage.total_tokens missing", 3))
     else:
-        checks.append(CheckResult("usage_integrity", Status.UNKNOWN, None, None, "expected usage not provided", 3))
+        checks.append(CheckResult("usage_integrity", Status.PASS, usage, None, "usage shape ok", 3))
     tools = _extract_tools(events)
     if original_tools:
-        normalized_actual = tuple({key: call[key] for key in ("id", "name", "arguments")} for call in tools)
-        normalized_expected = tuple({key: call.get(key) for key in ("id", "name", "arguments")} for call in original_tools)
-        changed = normalized_actual != normalized_expected
-        checks.append(CheckResult("tool_integrity", Status.FAIL if changed else Status.PASS, int(not changed), 1, f"observed={len(tools)}", 4))
+        matched = _tools_match(tools, original_tools)
+        checks.append(CheckResult("tool_integrity", Status.PASS if matched else Status.FAIL, int(matched), 1, f"observed={len(tools)}", 4))
     return StreamAuditResult(tuple(checks), "".join(text_parts), tools)
+
+
+def _normalize_arguments(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return ""
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return stripped
+
+
+def _tool_pair_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    expected_name = expected.get("name")
+    if isinstance(expected_name, str) and expected_name and actual.get("name") != expected_name:
+        return False
+    if "id" in expected and expected.get("id") is not None and actual.get("id") != expected.get("id"):
+        return False
+    if "arguments" not in expected or expected.get("arguments") is None:
+        return True
+    expected_args = _normalize_arguments(expected.get("arguments"))
+    actual_args = _normalize_arguments(actual.get("arguments"))
+    if isinstance(expected_args, dict) and isinstance(actual_args, dict):
+        return all(actual_args.get(key) == value for key, value in expected_args.items())
+    return actual_args == expected_args
+
+
+def _tools_match(actual_tools: tuple[dict[str, Any], ...], expected_tools: tuple[dict[str, Any], ...]) -> bool:
+    if len(actual_tools) != len(expected_tools):
+        return False
+    return all(_tool_pair_matches(actual, expected) for actual, expected in zip(actual_tools, expected_tools))

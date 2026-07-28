@@ -88,8 +88,13 @@ if (-not (Test-Path $VenvCli)) {
 }
 
 Write-Log "安装成功: $Wrapper"
-Write-Log "快速体验: llm-api-proxy-check check"
-Write-Log "真实检测: llm-api-proxy-check check --base-url URL --api-key KEY --model MODEL"
+Write-Log ""
+Write-Log "小白三步走："
+Write-Log "  1) 本地演示（无需 Key）: llm-api-proxy-check check --demo"
+Write-Log "  2) 中文设置向导:         llm-api-proxy-check setup"
+Write-Log "  3) 一键完整检测:         llm-api-proxy-check check"
+Write-Log ""
+Write-Log "查看配置: llm-api-proxy-check show-config"
 
 & $VenvPython -m llm_api_proxy_check check --format json | Out-Null
 Write-Log "验证完成（本地 demo 已通过模块入口）。"

@@ -35,7 +35,28 @@ class DemoTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("api-key", completed.stderr.lower())
+        self.assertIn("setup", completed.stderr.lower())
+
+    def test_check_demo_flag(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-m", "llm_api_proxy_check", "check", "--demo", "--format", "json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        payload = json.loads(completed.stdout)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(payload["risk"], "high")
+
+    def test_help_mentions_setup(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-m", "llm_api_proxy_check", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("setup", completed.stdout)
 
 
 if __name__ == "__main__":
