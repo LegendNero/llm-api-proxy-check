@@ -1,5 +1,7 @@
 # llm-api-proxy-check
 
+[English](README.md) | [中文](README_zh.md)
+
 Standard-library toolkit that **checks the integrity of OpenAI-compatible LLM API proxies** (relay / middleman endpoints).
 
 Detects common risks such as model-substitution signals, SSE stream tampering, tool-call rewriting, and usage accounting anomalies — no cloud account required for the local mock demo.
